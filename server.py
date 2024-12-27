@@ -72,11 +72,11 @@ def start_pipeline(bucket_name, file_path):
 def create_proj_folder(proj_name):
   # Create project folder
   proj_path = os.path.join(DATA_DIR, f"/{proj_name}")
-  os.makedirs(proj_path)
+  os.makedirs(proj_path, exist_ok=True)
   
   # Create /input folder
   input_path = os.path.join(proj_path, "/input")
-  os.makedirs(input_path)
+  os.makedirs(input_path, exist_ok=True)
   
   return proj_path
 

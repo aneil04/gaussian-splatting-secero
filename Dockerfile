@@ -1,42 +1,69 @@
-# Use the base image with PyTorch and CUDA support
-FROM pytorch/pytorch:2.0.1-cuda11.7-cudnn8-devel
+# Use NVIDIA's base image with CUDA 12.4
+FROM nvidia/cuda:12.4.0-devel-ubuntu20.04
 
-
-# NOTE:
-# Building the libraries for this repository requires cuda *DURING BUILD PHASE*, therefore:
-# - The default-runtime for container should be set to "nvidia" in the deamon.json file. See this: https://github.com/NVIDIA/nvidia-docker/issues/1033
-# - For the above to work, the nvidia-container-runtime should be installed in your host. Tested with version 1.14.0-rc.2
-# - Make sure NVIDIA's drivers are updated in the host machine. Tested with 525.125.06
-
+# Set environment variables for CUDA
 ENV DEBIAN_FRONTEND=noninteractive
+ENV CUDA_VERSION=12.4
+ENV PATH=/usr/local/cuda-${CUDA_VERSION}/bin:$PATH
+ENV LD_LIBRARY_PATH=/usr/local/cuda-${CUDA_VERSION}/lib64:$LD_LIBRARY_PATH
 
-# Update and install tzdata separately
-RUN apt update && apt install -y tzdata
+# Update and install necessary tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-dev git wget ffmpeg && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install necessary packages
-RUN apt install -y git && \
-    apt install -y libglew-dev libassimp-dev libboost-all-dev libgtk-3-dev libopencv-dev libglfw3-dev libavdevice-dev libavcodec-dev libeigen3-dev libxxf86vm-dev libembree-dev && \
-    apt clean && apt install wget && rm -rf /var/lib/apt/lists/*
+# install COLMAP
+RUN apt-get update && apt-get install -y \
+    git \
+    wget \
+    cmake \
+    ninja-build \
+    build-essential \
+    libboost-program-options-dev \
+    libboost-graph-dev \
+    libboost-system-dev \
+    libeigen3-dev \
+    libflann-dev \
+    libfreeimage-dev \
+    libmetis-dev \
+    libgoogle-glog-dev \
+    libgtest-dev \
+    libgmock-dev \
+    libsqlite3-dev \
+    libglew-dev \
+    qtbase5-dev \
+    libqt5opengl5-dev \
+    libcgal-dev \
+    libceres-dev && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
-# Create a workspace directory and clone the repository
-WORKDIR /workspace
-RUN git clone https://github.com/graphdeco-inria/gaussian-splatting --recursive
+# Install COLMAP
+RUN git clone https://github.com/colmap/colmap.git && \
+    cd colmap && \
+    mkdir build && \
+    cd build && \
+    cmake .. -GNinja -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc && \
+    ninja && \
+    ninja install
 
-# Create a Conda environment and activate it
-WORKDIR /workspace/gaussian-splatting
+# Clone repo
+RUN git clone --recursive https://github.com/aneil04/gaussian-splatting-secero.git
+WORKDIR /gaussian-splatting-secero
 
-RUN conda env create --file environment.yml && conda init bash && exec bash && conda activate gaussian_splatting
+# Download and install Miniconda
+ENV CONDA_DIR=/opt/conda
+RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda.sh && \
+    /bin/bash ~/miniconda.sh -b -p /opt/conda
+ENV PATH=$CONDA_DIR/bin:$PATH
+RUN conda create -n "gaussian_splatting" python=3.10.12
+RUN /bin/bash -c "conda init bash"
+RUN echo "conda activate gaussian_splatting" >> /root/.bashrc
 
-# # Tweak the CMake file for matching the existing OpenCV version. Fix the naming of FindEmbree.cmake
-# WORKDIR /workspace/gaussian-splatting/SIBR_viewers/cmake/linux
-# RUN sed -i 's/find_package(OpenCV 4\.5 REQUIRED)/find_package(OpenCV 4.2 REQUIRED)/g' dependencies.cmake
-# RUN sed -i 's/find_package(embree 3\.0 )/find_package(EMBREE)/g' dependencies.cmake
-# RUN mv /workspace/gaussian-splatting/SIBR_viewers/cmake/linux/Modules/FindEmbree.cmake /workspace/gaussian-splatting/SIBR_viewers/cmake/linux/Modules/FindEMBREE.cmake
+# Get pytorch
+RUN conda install -y pytorch torchvision torchaudio pytorch-cuda=12.4 -c pytorch -c nvidia
 
-# # Fix the naming of the embree library in the rayscaster's cmake
-# RUN sed -i 's/\bembree\b/embree3/g' /workspace/gaussian-splatting/SIBR_viewers/src/core/raycaster/CMakeLists.txt
+# Get submodules
+RUN pip install -q plyfile tqdm ./submodules/diff-gaussian-rasterization ./submodules/simple-knn
 
-# # Ready to build the viewer now.
-# WORKDIR /workspace/gaussian-splatting/SIBR_viewers 
-# RUN cmake -Bbuild . -DCMAKE_BUILD_TYPE=Release && \
-#     cmake --build build -j24 --target install
+CMD [ "python", "server.py" ]
